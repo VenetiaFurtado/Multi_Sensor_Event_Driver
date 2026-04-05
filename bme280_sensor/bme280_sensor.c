@@ -26,11 +26,13 @@
 #define BME280_CHIP_ID_REGISTER 0xD0
 #define BME280_CHIP_ID_VALUE 0x60
 
+MODULE_AUTHOR("Venetia Furtado");
+MODULE_LICENSE("Dual BSD/GPL");
+
 int sensor_major = 0; // use dynamic major
 int sensor_minor = 0;
 
-MODULE_AUTHOR("Venetia Furtado");
-MODULE_LICENSE("Dual BSD/GPL");
+static struct i2c_client *client_singleton;
 
 struct sensor_dev sensor_device;
 
@@ -65,6 +67,8 @@ ssize_t sensor_read(struct file *filp, char __user *buf, size_t count,
         return -EINVAL;
     }
 
+    val = i2c_smbus_read_byte_data(client_singleton, BME280_CHIP_ID_REGISTER);
+
     // copy data
     num_copy_bytes = 4;
 
@@ -85,56 +89,6 @@ ssize_t sensor_read(struct file *filp, char __user *buf, size_t count,
     return retval;
 }
 
-#if 0
-static int sensor_setup_cdev(struct sensor_dev *dev)
-{
-    int err, devno = MKDEV(sensor_major, sensor_minor);
-
-    cdev_init(&dev->cdev, &sensor_fops);
-    dev->cdev.owner = THIS_MODULE;
-    dev->cdev.ops = &sensor_fops;
-    err = cdev_add(&dev->cdev, devno, 1);
-    if (err)
-    {
-        printk(KERN_ERR "Error %d adding bme280 sensor cdev", err);
-    }
-    return err;
-}
-
-int sensor_init_module(void)
-{
-    dev_t dev = 0;
-    int result;
-    result = alloc_chrdev_region(&dev, sensor_minor, 1,
-                                 "bme280_sensor");
-    sensor_major = MAJOR(dev);
-    if (result < 0)
-    {
-        printk(KERN_WARNING "Can't get major %d\n", sensor_major);
-        return result;
-    }
-    memset(&sensor_device, 0, sizeof(struct sensor_dev));
-
-    result = sensor_setup_cdev(&sensor_device);
-
-    if (result)
-    {
-        unregister_chrdev_region(dev, 1);
-    }
-    return result;
-}
-
-void sensor_cleanup_module(void)
-{
-
-    dev_t devno = MKDEV(sensor_major, sensor_minor);
-
-    cdev_del(&sensor_device.cdev);
-
-    unregister_chrdev_region(devno, 1);
-}
-#endif
-
 struct file_operations bme280_sensor_fops = {
     .owner = THIS_MODULE,
     .read = sensor_read,
@@ -153,6 +107,8 @@ static int bme280_sensor_probe(struct i2c_client *client,
 {
     int status;
     uint8_t who;
+
+    client_singleton = client;
 
     who = i2c_smbus_read_byte_data(client, BME280_CHIP_ID_REGISTER);
     if (who != BME280_CHIP_ID_VALUE)
