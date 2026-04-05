@@ -18,7 +18,7 @@ obj-m	:= bme280_sensor.o
 #sensor-y := sensor.c
 else
 
-KERNELDIR ?= $(if $(KERNEL_DIR),$(KERNEL_DIR),/lib/modules/$(shell uname -r)/build
+KERNELDIR ?= /lib/modules/$(shell uname -r)/build
 PWD       := $(shell pwd)
 
 modules:
