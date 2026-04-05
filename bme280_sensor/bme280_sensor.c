@@ -1,5 +1,5 @@
 /**
- * @file aesdchar.c
+ * @file bme280_sensor.c
  * @brief Functions and data related to the AESD char driver implementation
  *
  * Based on the implementation of the "scull" device driver, found in
@@ -96,7 +96,7 @@ static int sensor_setup_cdev(struct sensor_dev *dev)
     err = cdev_add(&dev->cdev, devno, 1);
     if (err)
     {
-        printk(KERN_ERR "Error %d adding aesd cdev", err);
+        printk(KERN_ERR "Error %d adding bme280 sensor cdev", err);
     }
     return err;
 }
@@ -106,7 +106,7 @@ int sensor_init_module(void)
     dev_t dev = 0;
     int result;
     result = alloc_chrdev_region(&dev, sensor_minor, 1,
-                                 "aesdchar");
+                                 "bme280_sensor");
     sensor_major = MAJOR(dev);
     if (result < 0)
     {
