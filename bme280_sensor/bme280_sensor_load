@@ -1,6 +1,6 @@
 #!/bin/sh
-module=sensor
-device=sensor
+module=bme280_sensor
+device=bme280_sensor
 mode="664"
 cd `dirname $0`
 set -e
