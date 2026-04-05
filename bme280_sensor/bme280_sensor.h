@@ -11,7 +11,7 @@
 #define SENSOR_DEBUG 1 // Remove comment on this line to enable debug
 
 #undef PDEBUG /* undef it, just in case */
-#ifdef AESD_DEBUG
+#ifdef SENSOR_DEBUG
 #ifdef __KERNEL__
 /* This one if debugging is on, and kernel space */
 #define PDEBUG(fmt, args...) printk(KERN_DEBUG "sensor: " fmt, ##args)

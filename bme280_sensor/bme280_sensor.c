@@ -123,8 +123,10 @@ uint8_t BME280_Init(void)
     chip_id = BME280_ReadReg(BME280_REG_CHIP_ID);
     if (chip_id != BME280_CHIP_ID)
     {
+        PDEBUG("chip id incorrect %d", chip_id);
         return 0; // Wrong chip ID
     }
+    PDEBUG("Correct BME280 CHIP ID = %d", chip_id);
 
     // Soft reset
     BME280_WriteReg(BME280_REG_RESET, 0xB6);
@@ -295,7 +297,8 @@ void BME280_ReadAll(BME280_Data *data)
     adc_H = ((uint32_t)raw_data[6] << 8) | (uint32_t)raw_data[7];
 
     // Compensate and convert to float
-    data->temperature = BME280_CompensateTemp(adc_T);  // °C
+    data->temperature = BME280_CompensateTemp(adc_T); // °C
+    PDEBUG("Read Temperature = %d", data->temperature);
     data->pressure = BME280_CompensatePressure(adc_P); // hPa
     data->humidity = BME280_CompensateHumidity(adc_H); // %
 }
@@ -322,7 +325,7 @@ ssize_t sensor_read(struct file *filp, char __user *buf, size_t count,
     ssize_t retval = 0;
     ssize_t num_copy_bytes = 0;
     unsigned long copy_status = 0;
-    int val = 0x24;
+    int32_t val = 0x24;
     BME280_Data data;
 
     // error checking
@@ -334,6 +337,7 @@ ssize_t sensor_read(struct file *filp, char __user *buf, size_t count,
 
     BME280_ReadAll(&data);
     val = data.temperature;
+    PDEBUG("Val = %d", val);
 
     // copy data
     num_copy_bytes = 4;
