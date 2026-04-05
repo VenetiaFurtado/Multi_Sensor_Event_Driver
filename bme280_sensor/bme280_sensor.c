@@ -191,7 +191,6 @@ static void bme280_sensor_remove(struct i2c_client *client)
     misc_deregister(&bme280_sensor_device);
     PDEBUG("DEBUG: bme280 sensor removed");
     dev_info(&client->dev, "bme280 sensor unloaded\n");
-    return 0;
 }
 
 static const struct i2c_device_id bme280_sensor_id[] = {
