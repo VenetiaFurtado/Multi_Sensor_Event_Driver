@@ -117,23 +117,27 @@ uint8_t BME280_Init(void)
 {
     uint8_t chip_id;
     uint8_t calib_data[32];
-    int i = 0;
+    volatile int i = 0;
+    volatile int j = 0;
 
     // Check chip ID
     chip_id = BME280_ReadReg(BME280_REG_CHIP_ID);
     if (chip_id != BME280_CHIP_ID)
     {
-        PDEBUG("chip id incorrect %d", chip_id);
+        PDEBUG("chip id incorrect %x", chip_id);
         return 0; // Wrong chip ID
     }
-    PDEBUG("Correct BME280 CHIP ID = %d", chip_id);
+    PDEBUG("Correct BME280 CHIP ID = %x", chip_id);
 
     // Soft reset
     BME280_WriteReg(BME280_REG_RESET, 0xB6);
 
     // Wait for reset to complete
     for (i = 0; i < 100000; i++)
-        ;
+    {
+        for (j = 0; i < 100000; i++)
+            ;
+    }
 
     // Read calibration data (Temperature & Pressure)
     BME280_ReadRegs(BME280_REG_CALIB_00, calib_data, 26);
@@ -141,6 +145,8 @@ uint8_t BME280_Init(void)
     calib.dig_T1 = (calib_data[1] << 8) | calib_data[0];
     calib.dig_T2 = (calib_data[3] << 8) | calib_data[2];
     calib.dig_T3 = (calib_data[5] << 8) | calib_data[4];
+
+    PDEBUG("dig_T1=%d,T2=%d,T3=%d", calib.dig_T1, calib.dig_T2, calib.dig_T3);
 
     calib.dig_P1 = (calib_data[7] << 8) | calib_data[6];
     calib.dig_P2 = (calib_data[9] << 8) | calib_data[8];
@@ -298,7 +304,7 @@ void BME280_ReadAll(BME280_Data *data)
 
     // Compensate and convert to float
     data->temperature = BME280_CompensateTemp(adc_T); // °C
-    PDEBUG("Read Temperature = %d", data->temperature);
+    PDEBUG("ADC-T=%d;  Read Temperature = %d", adc_T, data->temperature);
     data->pressure = BME280_CompensatePressure(adc_P); // hPa
     data->humidity = BME280_CompensateHumidity(adc_H); // %
 }
