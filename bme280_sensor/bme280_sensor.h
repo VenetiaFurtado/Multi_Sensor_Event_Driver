@@ -1,5 +1,5 @@
 /*
- * sensor.h
+ * bme280_sensor.h
  *
  *  Created on: Oct 23, 2019
  *      Author: Dan Walkes

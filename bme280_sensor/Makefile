@@ -13,7 +13,7 @@ EXTRA_CFLAGS += $(DEBFLAGS)
 
 ifneq ($(KERNELRELEASE),)
 # call from kernel build system
-obj-m	:= sensor.o
+obj-m	:= bme280_sensor.o
 # uncomment to add other object files if required
 #sensor-y := sensor.c
 else

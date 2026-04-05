@@ -18,7 +18,7 @@
 #include <linux/cdev.h>
 #include <linux/slab.h> // required for kmalloc
 #include <linux/fs.h>   // file_operations
-#include "sensor.h"
+#include "bme280_sensor.h"
 
 int sensor_major = 0; // use dynamic major
 int sensor_minor = 0;
