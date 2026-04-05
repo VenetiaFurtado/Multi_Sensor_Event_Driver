@@ -186,7 +186,7 @@ err_misc:
     */
 }
 
-static int bme280_sensor_remove(struct i2c_client *client)
+static void bme280_sensor_remove(struct i2c_client *client)
 {
     misc_deregister(&bme280_sensor_device);
     PDEBUG("DEBUG: bme280 sensor removed");
