@@ -1,12 +1,30 @@
-KDIR   ?= $(LINUX_DIR)
-PWD    := $(shell pwd)
+# See example Makefile from scull project
+# Comment/uncomment the following line to disable/enable debugging
+#DEBUG = y
 
-obj-m  := bme280_sensor.o
+# Add your debugging flag (or not) to CFLAGS
+ifeq ($(DEBUG),y)
+  DEBFLAGS = -O -g -DSCULL_DEBUG # "-O" is needed to expand inlines
+else
+  DEBFLAGS = -O2
+endif
 
-.PHONY: all clean
+EXTRA_CFLAGS += $(DEBFLAGS)
 
-all:
-	$(MAKE) -C $(KDIR) M=$(PWD) modules
+ifneq ($(KERNELRELEASE),)
+# call from kernel build system
+obj-m	:= bme280_sensor.o
+# uncomment to add other object files if required
+#sensor-y := sensor.c
+else
+
+KERNELDIR ?= $(if $(KERNEL_DIR),$(KERNEL_DIR),/lib/modules/$(shell uname -r)/build
+PWD       := $(shell pwd)
+
+modules:
+	$(MAKE) -C $(KERNELDIR) M=$(PWD) modules
+
+endif
 
 clean:
-	$(MAKE) -C $(KDIR) M=$(PWD) clean
+	rm -rf *.o *~ core .depend .*.cmd *.ko *.mod.c .tmp_versions
