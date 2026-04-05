@@ -295,9 +295,9 @@ void BME280_ReadAll(BME280_Data *data)
     adc_H = ((uint32_t)raw_data[6] << 8) | (uint32_t)raw_data[7];
 
     // Compensate and convert to float
-    data->temperature = BME280_CompensateTemp(adc_T) / 100;    // °C
-    data->pressure = BME280_CompensatePressure(adc_P) / 25600; // hPa
-    data->humidity = BME280_CompensateHumidity(adc_H) / 1024;  // %
+    data->temperature = BME280_CompensateTemp(adc_T);  // °C
+    data->pressure = BME280_CompensatePressure(adc_P); // hPa
+    data->humidity = BME280_CompensateHumidity(adc_H); // %
 }
 
 int sensor_open(struct inode *inode, struct file *filp)

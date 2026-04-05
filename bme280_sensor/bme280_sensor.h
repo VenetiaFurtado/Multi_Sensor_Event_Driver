@@ -56,8 +56,8 @@ typedef struct
 // BME280 measurement data
 typedef struct
 {
-    int temperature; // °C
-    int pressure;    // hPa
-    int humidity;    // %
+    int32_t temperature; // °C
+    int32_t pressure;    // hPa
+    int32_t humidity;    // %
 } BME280_Data;
 #endif /* SENSOR_DRIVER_H_ */
