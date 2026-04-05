@@ -2,7 +2,12 @@
  * bme280_sensor.h
  *
  *  Created on: Oct 23, 2019
- *      Author: Dan Walkes
+ *  Author: Dan Walkes
+ *
+ * References:
+ * 1. https://github.com/sparkfun/SparkFun_BME280_Arduino_Library/tree/870c17da1f4c76561e14b8ffcc7cdffd63136e10/src
+ * 2. https://www.bosch-sensortec.com/media/boschsensortec/downloads/datasheets/bst-bme280-ds002.pdf
+ * 3. https://github.com/cu-ecen-aeld/assignments-3-and-later-VenetiaFurtado
  */
 
 #ifndef SENSOR_DRIVER_H_

@@ -1,11 +1,16 @@
 /**
  * @file bme280_sensor.c
- * @brief
+ * @brief Driver code for the BME280 sensor
  *
- * @author Dan Walkes
- * @date 2019-10-22
- * @copyright Copyright (c) 2019
+ * @author Venetia Furtado
+ * @date 2026-04-05
  *
+ * References:
+ * 1. https://github.com/sparkfun/SparkFun_BME280_Arduino_Library/tree/870c17da1f4c76561e14b8ffcc7cdffd63136e10/src
+ * 2. https://www.bosch-sensortec.com/media/boschsensortec/downloads/datasheets/bst-bme280-ds002.pdf
+ * 3. https://github.com/cu-ecen-aeld/assignments-3-and-later-VenetiaFurtado
+ * 4. https://developerhelp.microchip.com/xwiki/bin/view/software-tools/linux/apps-i2c/
+ * 5. https://chat.deepseek.com/share/w18dko9noz63hm2vq9
  */
 
 #include <linux/module.h>
@@ -46,23 +51,23 @@ int sensor_major = 0; // use dynamic major
 int sensor_minor = 0;
 
 static struct i2c_client *client_singleton;
-
 struct sensor_dev sensor_device;
 
 // Global calibration data
 BME280_CalibData calib;
+
 int32_t t_fine; // Used for temperature compensation
 
 /**
  * @brief Writes a single byte to a BME280 register.
  *
  * Sends a command to write a value to the given register address
- * using either SPI or I2C depending on the build configuration.
+ * using I2C.
  *
  * @param reg   Register address to write to.
  * @param value Byte value to write into the register.
  */
-void BME280_WriteReg(const uint8_t reg, const uint8_t value)
+void bme280_write_reg(const uint8_t reg, const uint8_t value)
 {
     i2c_smbus_write_byte_data(client_singleton, reg, value);
 }
@@ -70,13 +75,12 @@ void BME280_WriteReg(const uint8_t reg, const uint8_t value)
 /**
  * @brief Reads a single byte from a BME280 register.
  *
- * Retrieves a value from the specified register using either
- * SPI or I2C depending on the build configuration.
+ * Retrieves a value from the specified register using I2C.
  *
  * @param reg Register address to read from.
  * @return uint8_t Value read from the register.
  */
-uint8_t BME280_ReadReg(const uint8_t reg)
+uint8_t bme280_read_reg(const uint8_t reg)
 {
     uint8_t read_val;
     read_val = i2c_smbus_read_byte_data(client_singleton, reg);
@@ -93,12 +97,12 @@ uint8_t BME280_ReadReg(const uint8_t reg)
  * @param buffer  Pointer to buffer to store read values.
  * @param len     Number of bytes to read.
  */
-void BME280_ReadRegs(uint8_t reg, uint8_t *buffer, uint8_t len)
+void bme280_read_regs(uint8_t reg, uint8_t *buffer, uint8_t len)
 {
     uint8_t i = 0;
     for (i = 0; i < len; i++)
     {
-        buffer[i] = BME280_ReadReg(reg++);
+        buffer[i] = bme280_read_reg(reg++);
     }
 }
 
@@ -113,7 +117,7 @@ void BME280_ReadRegs(uint8_t reg, uint8_t *buffer, uint8_t len)
  * @return uint8_t Returns 1 on successful initialization, 0 if the
  *                 chip ID does not match the expected value.
  */
-uint8_t BME280_Init(void)
+uint8_t bme280_init(void)
 {
     uint8_t chip_id;
     uint8_t calib_data[32];
@@ -121,7 +125,7 @@ uint8_t BME280_Init(void)
     volatile int j = 0;
 
     // Check chip ID
-    chip_id = BME280_ReadReg(BME280_REG_CHIP_ID);
+    chip_id = bme280_read_reg(BME280_REG_CHIP_ID);
     if (chip_id != BME280_CHIP_ID)
     {
         PDEBUG("chip id incorrect %x", chip_id);
@@ -130,7 +134,7 @@ uint8_t BME280_Init(void)
     PDEBUG("Correct BME280 CHIP ID = %x", chip_id);
 
     // Soft reset
-    BME280_WriteReg(BME280_REG_RESET, 0xB6);
+    bme280_write_reg(BME280_REG_RESET, 0xB6);
 
     // Wait for reset to complete
     for (i = 0; i < 100000; i++)
@@ -140,7 +144,7 @@ uint8_t BME280_Init(void)
     }
 
     // Read calibration data (Temperature & Pressure)
-    BME280_ReadRegs(BME280_REG_CALIB_00, calib_data, 26);
+    bme280_read_regs(BME280_REG_CALIB_00, calib_data, 26);
 
     calib.dig_T1 = (calib_data[1] << 8) | calib_data[0];
     calib.dig_T2 = (calib_data[3] << 8) | calib_data[2];
@@ -161,7 +165,7 @@ uint8_t BME280_Init(void)
     calib.dig_H1 = calib_data[25];
 
     // Read calibration data (Humidity)
-    BME280_ReadRegs(BME280_REG_CALIB_26, calib_data, 7);
+    bme280_read_regs(BME280_REG_CALIB_26, calib_data, 7);
 
     calib.dig_H2 = (calib_data[1] << 8) | calib_data[0];
     calib.dig_H3 = calib_data[2];
@@ -171,13 +175,13 @@ uint8_t BME280_Init(void)
 
     // Configure sensor
     // Humidity oversampling x1
-    BME280_WriteReg(BME280_REG_CTRL_HUM, 0x01);
+    bme280_write_reg(BME280_REG_CTRL_HUM, 0x01);
 
     // Temperature oversampling x1, Pressure oversampling x1, Normal mode
-    BME280_WriteReg(BME280_REG_CTRL_MEAS, 0x27);
+    bme280_write_reg(BME280_REG_CTRL_MEAS, 0x27);
 
     // Standby time 0.5ms, filter off
-    BME280_WriteReg(BME280_REG_CONFIG, 0x00);
+    bme280_write_reg(BME280_REG_CONFIG, 0x00);
 
     return 1; // Success
 }
@@ -189,7 +193,7 @@ uint8_t BME280_Init(void)
  * @param adc_T Raw temperature ADC value (20-bit).
  * @return int32_t Temperature in hundredths of a degree Celsius (°C × 100).
  */
-int32_t BME280_CompensateTemp(int32_t adc_T)
+int32_t bme280_compensate_temp(int32_t adc_T)
 {
     int32_t var1, var2, T;
 
@@ -214,7 +218,7 @@ int32_t BME280_CompensateTemp(int32_t adc_T)
  * @param adc_P Raw pressure ADC value (20-bit).
  * @return uint32_t Compensated pressure in Pa/256.
  */
-uint32_t BME280_CompensatePressure(int32_t adc_P)
+uint32_t bme280_compensate_pressure(int32_t adc_P)
 {
     int64_t var1, var2, p;
 
@@ -246,7 +250,7 @@ uint32_t BME280_CompensatePressure(int32_t adc_P)
  * @param adc_H Raw humidity ADC value (16-bit).
  * @return uint32_t Relative humidity in %RH × 1024.
  */
-uint32_t BME280_CompensateHumidity(int32_t adc_H)
+uint32_t bme280_compensate_humidity(int32_t adc_H)
 {
     int32_t v_x1_u32r;
 
@@ -287,13 +291,13 @@ uint32_t BME280_CompensateHumidity(int32_t adc_H)
  *             - pressure (hPa)
  *             - humidity (%RH)
  */
-void BME280_ReadAll(BME280_Data *data)
+void bme280_read_all(BME280_Data *data)
 {
     uint8_t raw_data[8];
     int32_t adc_T, adc_P, adc_H;
 
     // Read all sensor data (0xF7 to 0xFE)
-    BME280_ReadRegs(BME280_REG_PRESS_MSB, raw_data, 8);
+    bme280_read_regs(BME280_REG_PRESS_MSB, raw_data, 8);
 
     // Parse raw data
     adc_P = ((uint32_t)raw_data[0] << 12) | ((uint32_t)raw_data[1] << 4) |
@@ -303,12 +307,19 @@ void BME280_ReadAll(BME280_Data *data)
     adc_H = ((uint32_t)raw_data[6] << 8) | (uint32_t)raw_data[7];
 
     // Compensate and convert to float
-    data->temperature = BME280_CompensateTemp(adc_T); // °C
+    data->temperature = bme280_compensate_temp(adc_T); // °C
     PDEBUG("ADC-T=%d;  Read Temperature = %d", adc_T, data->temperature);
-    data->pressure = BME280_CompensatePressure(adc_P); // hPa
-    data->humidity = BME280_CompensateHumidity(adc_H); // %
+    data->pressure = bme280_compensate_pressure(adc_P); // hPa
+    data->humidity = bme280_compensate_humidity(adc_H); // %
 }
 
+/**
+ * @brief This function is called when a user-space application performs the open()
+ * system call on the sensor device file
+ *
+ * @param inode Pointer to the inode structure representing the device file.
+ * @param filp  Pointer to the file structure representing the open file descriptor.
+ */
 int sensor_open(struct inode *inode, struct file *filp)
 {
     struct sensor_dev *dev;
@@ -318,6 +329,12 @@ int sensor_open(struct inode *inode, struct file *filp)
     return 0;
 }
 
+/**
+ * @brief Sensor device release/close handler.
+ *
+ * @param inode Device inode structure
+ * @param filp  File structure for the device being closed
+ */
 int sensor_release(struct inode *inode, struct file *filp)
 {
     PDEBUG("release");
@@ -325,6 +342,14 @@ int sensor_release(struct inode *inode, struct file *filp)
     return 0;
 }
 
+/**
+ * @brief  Reads temperature data from the sensor and copies it to user space.
+ *
+ * @param filp  Pointer to the file structure representing the open file descriptor.
+ * @param buf   User-space buffer to receive the sensor data.
+ * @param count Number of bytes requested to read.
+ * @param f_pos Pointer to the current file position.
+ */
 ssize_t sensor_read(struct file *filp, char __user *buf, size_t count,
                     loff_t *f_pos)
 {
@@ -341,7 +366,7 @@ ssize_t sensor_read(struct file *filp, char __user *buf, size_t count,
         return -EINVAL;
     }
 
-    BME280_ReadAll(&data);
+    bme280_read_all(&data);
     val = data.temperature;
     PDEBUG("Val = %d", val);
 
@@ -378,6 +403,19 @@ static struct miscdevice bme280_sensor_device = {
     .fops = &bme280_sensor_fops,
 };
 
+/**
+ * @brief I2C probe function for the BME280 sensor. This function is called when
+ * the I2C core detects a device matching the driver's
+ * ID table. It verifies the chip ID by reading from the BME280's CHIP_ID register,
+ * initializes the sensor, and registers the device.
+ *
+ * References:
+ * 1. https://developerhelp.microchip.com/xwiki/bin/view/software-tools/linux/apps-i2c/
+ * 2. https://chat.deepseek.com/share/w18dko9noz63hm2vq9
+ *
+ * @param client Pointer to the I2C client structure representing the detected device.
+ * @param id     Pointer to the I2C device ID entry that matched the detected device.
+ */
 static int bme280_sensor_probe(struct i2c_client *client,
                                const struct i2c_device_id *id)
 {
@@ -396,7 +434,7 @@ static int bme280_sensor_probe(struct i2c_client *client,
 
     PDEBUG("DEBUG: bme280 sensor found");
 
-    /* register device */
+    // register device
     status = misc_register(&bme280_sensor_device);
     if (status != 0)
     {
@@ -409,18 +447,16 @@ static int bme280_sensor_probe(struct i2c_client *client,
 
     dev_info(&client->dev, "bme280 sensor driver loaded\n");
 
-    BME280_Init();
+    bme280_init();
 
     return 0;
-
-    /*
-    TODO: deregister if register and we have error
-err_misc:
-    misc_deregister(&bme280_sensor_device);
-    return ret;
-    */
 }
 
+/**
+ * @brief I2C remove handler for BME280 sensor cleanup
+ *
+ * @param client I2C client structure for the device being removed
+ */
 static void bme280_sensor_remove(struct i2c_client *client)
 {
     misc_deregister(&bme280_sensor_device);
@@ -443,6 +479,3 @@ static struct i2c_driver bme280_sensor_driver = {
 };
 
 module_i2c_driver(bme280_sensor_driver);
-
-// module_init(sensor_init_module);
-// module_exit(sensor_cleanup_module);

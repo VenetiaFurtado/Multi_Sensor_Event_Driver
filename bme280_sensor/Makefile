@@ -1,3 +1,7 @@
+################################################################################
+# Reference: https://github.com/cu-ecen-aeld/assignments-3-and-later-VenetiaFurtado
+#
+################################################################################
 # See example Makefile from scull project
 # Comment/uncomment the following line to disable/enable debugging
 #DEBUG = y
