@@ -25,7 +25,6 @@
 #include "bme280_sensor.h"
 
 #define BME280_SENSOR_DEVICE "bme280_sensor"
-
 // BME280 Register Addresses
 #define BME280_REG_CHIP_ID 0xD0
 #define BME280_REG_RESET 0xE0
@@ -36,13 +35,11 @@
 #define BME280_REG_PRESS_MSB 0xF7
 #define BME280_REG_TEMP_MSB 0xFA
 #define BME280_REG_HUM_MSB 0xFD
-
 // Calibration data registers
 #define BME280_REG_CALIB_00 0x88
 #define BME280_REG_CALIB_26 0xE1
-
-// Expected chip ID
-#define BME280_CHIP_ID 0x60
+#define BME280_CHIP_ID 0x60 // Expected chip ID
+#define DEVICE_COUNT 3
 
 MODULE_AUTHOR("Venetia Furtado");
 MODULE_LICENSE("Dual BSD/GPL");
@@ -53,9 +50,35 @@ int sensor_minor = 0;
 static struct i2c_client *client_singleton;
 struct sensor_dev sensor_device;
 
+enum bme280_type
+{
+    BME_TEMP = 0,
+    BME_HUMIDITY = 1,
+    BME_PRESSURE = 2,
+};
+
+// Shared hardware structure
+struct bme280_hw
+{
+    struct mutex lock;
+    int temp;
+    int humidity;
+    int pressure;
+};
+
+// Per-device node
+struct bme280_node
+{
+    struct miscdevice miscdev;
+    struct bme280_hw *hw;
+    enum bme280_type type;
+};
+
+static struct bme280_hw g_hw;                  // singleton hardware instance
+static struct bme280_node nodes[DEVICE_COUNT]; // array of device nodes
+
 // Global calibration data
 BME280_CalibData calib;
-
 int32_t t_fine; // Used for temperature compensation
 
 /**
@@ -324,11 +347,18 @@ void bme280_read_all(BME280_Data *data)
  */
 int sensor_open(struct inode *inode, struct file *filp)
 {
+    struct miscdevice *mdev = filp->private_data;
+    struct bme280_node *node = container_of(mdev, struct bme280_node, miscdev);
+    filp->private_data = node;
+    return 0;
+
+#if 0
     struct sensor_dev *dev;
     PDEBUG("open");
     dev = container_of(inode->i_cdev, struct sensor_dev, cdev);
     filp->private_data = dev;
     return 0;
+#endif
 }
 
 /**
@@ -360,6 +390,8 @@ ssize_t sensor_read(struct file *filp, char __user *buf, size_t count,
     unsigned long copy_status = 0;
     int32_t val = 0x24;
     BME280_Data data;
+    struct bme280_node *node = filp->private_data;
+    struct bme280_hw *hw = node->hw;
 
     // error checking
     if (filp == NULL || buf == NULL || f_pos == NULL)
@@ -368,9 +400,24 @@ ssize_t sensor_read(struct file *filp, char __user *buf, size_t count,
         return -EINVAL;
     }
 
+    mutex_lock(&hw->lock);
     bme280_read_all(&data);
-    val = data.temperature;
-    PDEBUG("Val = %d", val);
+    mutex_unlock(&hw->lock);
+
+    switch (node->type)
+    {
+    case BME_TEMP:
+        val = data.temperature;
+        break;
+    case BME_HUMIDITY:
+        val = data.humidity;
+        break;
+    case BME_PRESSURE:
+        val = data.pressure;
+        break;
+    default:
+        return -EINVAL;
+    }
 
     // copy data
     num_copy_bytes = 4;
@@ -399,11 +446,13 @@ struct file_operations bme280_sensor_fops = {
     .release = sensor_release,
 };
 
+/*
 static struct miscdevice bme280_sensor_device = {
     .minor = MISC_DYNAMIC_MINOR,
     .name = BME280_SENSOR_DEVICE,
     .fops = &bme280_sensor_fops,
 };
+*/
 
 /**
  * @brief I2C probe function for the BME280 sensor. This function is called when
@@ -423,20 +472,45 @@ static int bme280_sensor_probe(struct i2c_client *client,
 {
     int status;
     uint8_t who;
+    int i;
+    const char *names[DEVICE_COUNT];
 
     client_singleton = client;
 
     who = i2c_smbus_read_byte_data(client, BME280_REG_CHIP_ID);
     if (who != BME280_CHIP_ID)
     {
-        dev_err(&client->dev,
-                "unknown CHIP ID: 0x%02x\n", who);
+        dev_err(&client->dev, "unknown CHIP ID: 0x%02x\n", who);
         return -ENODEV;
     }
 
     PDEBUG("DEBUG: bme280 sensor found");
 
+    mutex_init(&g_hw.lock);
+
+    names[0] = "bme280_temp";
+    names[1] = "bme280_humidity";
+    names[2] = "bme280_pressure";
+
     // register device
+    for (i = 0; i < DEVICE_COUNT; i++)
+    {
+        nodes[i].type = i;
+        nodes[i].hw = &g_hw;
+
+        nodes[i].miscdev.minor = MISC_DYNAMIC_MINOR; // device node minor number
+        nodes[i].miscdev.name = names[i];            // device node name
+        nodes[i].miscdev.fops = &bme280_sensor_fops; // file ops for device node
+
+        status = misc_register(&nodes[i].miscdev);
+        if (status)
+        {
+            PDEBUG("ERROR: Failed to register %s\n", names[i]);
+            goto fail;
+        }
+    }
+
+#if 0
     status = misc_register(&bme280_sensor_device);
     if (status != 0)
     {
@@ -444,6 +518,7 @@ static int bme280_sensor_probe(struct i2c_client *client,
                 "misc_register failed: %d\n", status);
         return status;
     }
+#endif
 
     PDEBUG("DEBUG: bme280 sensor registered");
 
@@ -452,6 +527,13 @@ static int bme280_sensor_probe(struct i2c_client *client,
     bme280_init();
 
     return 0;
+
+fail:
+    while (--i >= 0)
+    {
+        misc_deregister(&nodes[i].miscdev);
+    }
+    return status;
 }
 
 /**
@@ -461,7 +543,11 @@ static int bme280_sensor_probe(struct i2c_client *client,
  */
 static void bme280_sensor_remove(struct i2c_client *client)
 {
-    misc_deregister(&bme280_sensor_device);
+    int i;
+    for (i = 0; i < DEVICE_COUNT; i++)
+    {
+        misc_deregister(&nodes[i].miscdev);
+    }
     PDEBUG("DEBUG: bme280 sensor removed");
     dev_info(&client->dev, "bme280 sensor unloaded\n");
 }
