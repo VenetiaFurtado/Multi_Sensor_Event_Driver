@@ -310,4 +310,6 @@ bme280_sensor.o: \
  include/linux/blk-mq.h include/linux/node.h include/linux/pagemap.h \
  include/linux/hugetlb_inline.h include/uapi/linux/mempolicy.h \
  include/linux/freezer.h include/uapi/linux/i2c.h include/linux/cdev.h \
+ include/linux/delay.h arch/x86/include/asm/delay.h \
+ include/asm-generic/delay.h \
  /home/ubuntu/Multi_Sensor_Event_Driver/bme280_sensor/bme280_sensor.h

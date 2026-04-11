@@ -22,6 +22,8 @@
 #include <linux/cdev.h>
 #include <linux/slab.h> // required for kmalloc
 #include <linux/fs.h>   // file_operations
+#include <linux/kthread.h>
+#include <linux/delay.h>
 #include "bme280_sensor.h"
 
 #define BME280_SENSOR_DEVICE "bme280_sensor"
@@ -43,12 +45,6 @@
 
 MODULE_AUTHOR("Venetia Furtado");
 MODULE_LICENSE("Dual BSD/GPL");
-
-int sensor_major = 0; // use dynamic major
-int sensor_minor = 0;
-
-static struct i2c_client *client_singleton;
-struct sensor_dev sensor_device;
 
 enum bme280_type
 {
@@ -76,9 +72,14 @@ struct bme280_node
 
 static struct bme280_hw g_hw;                  // singleton hardware instance
 static struct bme280_node nodes[DEVICE_COUNT]; // array of device nodes
+static struct i2c_client *client_singleton;
+static struct task_struct *sensor_read_kthread; // reads bme280 asynchronously
+//static struct sensor_dev sensor_device;
+static BME280_Data sensor_data; // kthread writes into (shared memory between kthread and user_read)
 
-// Global calibration data
-BME280_CalibData calib;
+int sensor_major = 0; // use dynamic major
+int sensor_minor = 0;
+BME280_CalibData calib; // Global calibration data
 int32_t t_fine; // Used for temperature compensation
 
 /**
@@ -345,7 +346,7 @@ void bme280_read_all(BME280_Data *data)
  * @param inode Pointer to the inode structure representing the device file.
  * @param filp  Pointer to the file structure representing the open file descriptor.
  */
-int sensor_open(struct inode *inode, struct file *filp)
+int user_open(struct inode *inode, struct file *filp)
 {
     struct miscdevice *mdev = filp->private_data;
     struct bme280_node *node = container_of(mdev, struct bme280_node, miscdev);
@@ -367,7 +368,7 @@ int sensor_open(struct inode *inode, struct file *filp)
  * @param inode Device inode structure
  * @param filp  File structure for the device being closed
  */
-int sensor_release(struct inode *inode, struct file *filp)
+int user_release(struct inode *inode, struct file *filp)
 {
     PDEBUG("release");
     filp->private_data = NULL;
@@ -382,14 +383,14 @@ int sensor_release(struct inode *inode, struct file *filp)
  * @param count Number of bytes requested to read.
  * @param f_pos Pointer to the current file position.
  */
-ssize_t sensor_read(struct file *filp, char __user *buf, size_t count,
-                    loff_t *f_pos)
+ssize_t user_read(struct file *filp, char __user *buf, size_t count,
+                  loff_t *f_pos)
 {
     ssize_t retval = 0;
     ssize_t num_copy_bytes = 0;
     unsigned long copy_status = 0;
     int32_t val = 0x24;
-    BME280_Data data;
+    BME280_Data local_user_data;
     struct bme280_node *node = filp->private_data;
     struct bme280_hw *hw = node->hw;
 
@@ -401,19 +402,19 @@ ssize_t sensor_read(struct file *filp, char __user *buf, size_t count,
     }
 
     mutex_lock(&hw->lock);
-    bme280_read_all(&data);
+    memcpy(&local_user_data, &sensor_data, sizeof(BME280_Data));
     mutex_unlock(&hw->lock);
 
     switch (node->type)
     {
     case BME_TEMP:
-        val = data.temperature;
+        val = local_user_data.temperature;
         break;
     case BME_HUMIDITY:
-        val = data.humidity;
+        val = local_user_data.humidity;
         break;
     case BME_PRESSURE:
-        val = data.pressure;
+        val = local_user_data.pressure;
         break;
     default:
         return -EINVAL;
@@ -441,18 +442,39 @@ ssize_t sensor_read(struct file *filp, char __user *buf, size_t count,
 
 struct file_operations bme280_sensor_fops = {
     .owner = THIS_MODULE,
-    .read = sensor_read,
-    .open = sensor_open,
-    .release = sensor_release,
+    .read = user_read,
+    .open = user_open,
+    .release = user_release,
 };
 
-/*
+#if 0
 static struct miscdevice bme280_sensor_device = {
     .minor = MISC_DYNAMIC_MINOR,
     .name = BME280_SENSOR_DEVICE,
     .fops = &bme280_sensor_fops,
 };
-*/
+#endif
+
+/**
+ * @brief kthread entry function
+ */
+static int sensor_read(void *data)
+{
+    struct bme280_hw *hw = &g_hw;
+    BME280_Data local_data;
+    while (!kthread_should_stop())
+    {
+        PDEBUG("sensor_read: running\n");
+        bme280_read_all(&local_data); // reads from hw
+        mutex_lock(&hw->lock);
+        memcpy(&sensor_data, &local_data, sizeof(BME280_Data)); // copies to sensory_data(shared memory between kthread and user_read)
+        mutex_unlock(&hw->lock);
+        msleep(100);
+    }
+    PDEBUG("sensor_read: stopping\n");
+
+    return 0;
+}
 
 /**
  * @brief I2C probe function for the BME280 sensor. This function is called when
@@ -486,7 +508,16 @@ static int bme280_sensor_probe(struct i2c_client *client,
 
     PDEBUG("DEBUG: bme280 sensor found");
 
+    bme280_init();
+
     mutex_init(&g_hw.lock);
+
+    sensor_read_kthread = kthread_run(sensor_read, NULL, "sensor_read_kthread");
+    if (IS_ERR(sensor_read_kthread))
+    {
+        PDEBUG("ERROR: Failed to create kthread\n");
+        return -ENOMEM;
+    }
 
     names[0] = "bme280_temp";
     names[1] = "bme280_humidity";
@@ -521,10 +552,7 @@ static int bme280_sensor_probe(struct i2c_client *client,
 #endif
 
     PDEBUG("DEBUG: bme280 sensor registered");
-
     dev_info(&client->dev, "bme280 sensor driver loaded\n");
-
-    bme280_init();
 
     return 0;
 
@@ -547,6 +575,10 @@ static void bme280_sensor_remove(struct i2c_client *client)
     for (i = 0; i < DEVICE_COUNT; i++)
     {
         misc_deregister(&nodes[i].miscdev);
+    }
+    if (sensor_read_kthread)
+    {
+        kthread_stop(sensor_read_kthread);
     }
     PDEBUG("DEBUG: bme280 sensor removed");
     dev_info(&client->dev, "bme280 sensor unloaded\n");
