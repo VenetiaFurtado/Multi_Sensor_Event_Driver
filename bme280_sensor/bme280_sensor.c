@@ -72,6 +72,9 @@ static BME280_Data sensor_data; // kthread writes into (shared memory between kt
 static int current_temp = 20;   // Synthetic temperature
 static int high_flag = 0, low_flag = 0;
 
+
+static struct i2c_client *client_singleton;
+
 /**
  * @brief This function is called when a user-space application performs the open()
  * system call on the sensor device file
@@ -309,7 +312,7 @@ static int bme280_sensor_probe(struct i2c_client *client,
 
     PDEBUG("DEBUG: bme280 sensor found");
 
-    bme280_init();
+    bme280_init(client_singleton);
 
     mutex_init(&g_hw.lock);
 

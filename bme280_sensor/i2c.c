@@ -98,12 +98,13 @@ void bme280_read_regs(uint8_t reg, uint8_t *buffer, uint8_t len)
  * @return uint8_t Returns 1 on successful initialization, 0 if the
  *                 chip ID does not match the expected value.
  */
-uint8_t bme280_init(void)
+uint8_t bme280_init(struct i2c_client *client_ptr)
 {
     uint8_t chip_id;
     uint8_t calib_data[32];
     volatile int i = 0;
     volatile int j = 0;
+    client_singleton = client_ptr;
 
     // Check chip ID
     chip_id = bme280_read_reg(BME280_REG_CHIP_ID);

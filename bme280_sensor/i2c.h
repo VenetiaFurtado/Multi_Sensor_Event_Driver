@@ -16,7 +16,7 @@
 #define BME280_REG_CALIB_26 0xE1
 #define BME280_CHIP_ID 0x60 // Expected chip ID
 
-uint8_t bme280_init(void);
+uint8_t bme280_init(struct i2c_client *client_ptr);
 void bme280_read_all(BME280_Data *data);
 
 #endif
