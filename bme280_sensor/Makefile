@@ -17,9 +17,9 @@ EXTRA_CFLAGS += $(DEBFLAGS)
 
 ifneq ($(KERNELRELEASE),)
 # call from kernel build system
-obj-m	:= bme280_sensor.o
+obj-m	:= bme280_sensor.o 
 # uncomment to add other object files if required
-#sensor-y := sensor.c
+bme280_sensor-y :=  i2c.o
 else
 
 KERNELDIR ?= /lib/modules/$(shell uname -r)/build
