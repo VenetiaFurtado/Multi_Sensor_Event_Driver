@@ -385,7 +385,7 @@ int user_release(struct inode *inode, struct file *filp)
 }
 
 /**
- * @brief  Reads temperature data from the sensor and copies it to user space.
+ * @brief  syscall handler for read()
  *
  * @param filp  Pointer to the file structure representing the open file descriptor.
  * @param buf   User-space buffer to receive the sensor data.
@@ -456,10 +456,12 @@ struct file_operations bme280_sensor_fops = {
     .release = user_release,
 };
 
-/* -------- HIGH TEMP DEVICE -------- */
+/*****************HIGH TEMP DEVICE******************/
 
-ssize_t high_temp_read(struct file *f, char __user *buf,
-                       size_t len, loff_t *off)
+/**
+ * @brief syscall handler for read() for /dev/high_temperature_event
+ */
+ssize_t high_temp_read(struct file *f, char __user *buf, size_t len, loff_t *off)
 {
     wait_event_interruptible(wq_high, high_flag != 0);
 
@@ -479,13 +481,13 @@ static struct miscdevice dev_high = {
     .fops = &fops_high,
 };
 
-/* -------- LOW TEMP DEVICE -------- */
-
-ssize_t low_temp_read(struct file *f, char __user *buf,
-                      size_t len, loff_t *off)
+/*******************LOW TEMP DEVICE******************/
+/**
+ * @brief syscall handler for read() for /dev/low_temperature_event
+ */
+ssize_t low_temp_read(struct file *f, char __user *buf, size_t len, loff_t *off)
 {
     wait_event_interruptible(wq_low, low_flag != 0);
-
     low_flag = 0;
 
     return 0;
@@ -523,12 +525,14 @@ static int sensor_read(void *data)
     return 0;
 }
 
-/* Thread simulating temperature */
+/**
+ * @brief Thread generating high/low temperature events
+ */
 static int synthetic_data_event_thread(void *data)
 {
     while (!kthread_should_stop())
     {
-        ssleep(1);
+        ssleep(1); // 1 sec
 
         current_temp = get_random_u32() % (HIGH_TEMP_THRESHOLD + 5);
 
@@ -585,8 +589,7 @@ static int bme280_sensor_probe(struct i2c_client *client,
 
     mutex_init(&g_hw.lock);
 
-    /*Events*/
-
+    // Events
     init_waitqueue_head(&wq_high);
     status = misc_register(&dev_high);
     if (status)
