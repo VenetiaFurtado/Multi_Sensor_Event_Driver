@@ -46,6 +46,7 @@
 #define DEVICE_COUNT 3
 
 #define HIGH_TEMP_THRESHOLD 30
+#define LOW_TEMP_THRESHOLD 5
 
 MODULE_AUTHOR("Venetia Furtado");
 MODULE_LICENSE("Dual BSD/GPL");
@@ -79,7 +80,7 @@ static struct bme280_node nodes[DEVICE_COUNT]; // array of device nodes
 static struct i2c_client *client_singleton;
 static struct task_struct *sensor_read_kthread; // reads bme280 asynchronously
 static struct task_struct *synthetic_data_event_kthread;
-static wait_queue_head_t wq_high;
+static wait_queue_head_t wq_high, wq_low;
 
 // static struct sensor_dev sensor_device;
 static BME280_Data sensor_data; // kthread writes into (shared memory between kthread and user_read)
@@ -88,7 +89,7 @@ BME280_CalibData calib; // Global calibration data
 int32_t t_fine;         // Used for temperature compensation
 
 static int current_temp = 20; // Synthetic temperature
-static int high_flag = 0;
+static int high_flag = 0, low_flag = 0;
 
 /**
  * @brief Writes a single byte to a BME280 register.
@@ -478,6 +479,29 @@ static struct miscdevice dev_high = {
     .fops = &fops_high,
 };
 
+/* -------- LOW TEMP DEVICE -------- */
+
+ssize_t low_temp_read(struct file *f, char __user *buf,
+                      size_t len, loff_t *off)
+{
+    wait_event_interruptible(wq_low, low_flag != 0);
+
+    low_flag = 0;
+
+    return 0;
+}
+
+static const struct file_operations fops_low = {
+    .owner = THIS_MODULE,
+    .read = low_temp_read,
+};
+
+static struct miscdevice dev_low = {
+    .minor = MISC_DYNAMIC_MINOR,
+    .name = "low_temperature_event",
+    .fops = &fops_low,
+};
+
 /**
  * @brief kthread entry function
  */
@@ -513,7 +537,13 @@ static int synthetic_data_event_thread(void *data)
             high_flag = 1;
             wake_up_interruptible(&wq_high);
             PDEBUG("DEBUG: HIGH TEMP EVENT: %d\n", current_temp);
-            current_temp = 0;
+        }
+
+        if (current_temp <= LOW_TEMP_THRESHOLD)
+        {
+            low_flag = 1;
+            wake_up_interruptible(&wq_low);
+            PDEBUG("DEBUG: LOW TEMP EVENT: %d\n", current_temp);
         }
     }
     return 0;
@@ -562,6 +592,14 @@ static int bme280_sensor_probe(struct i2c_client *client,
     if (status)
     {
         PDEBUG("ERROR: Failed to register high temperature dev node\n");
+        return -ENOMEM;
+    }
+
+    init_waitqueue_head(&wq_low);
+    status = misc_register(&dev_low);
+    if (status)
+    {
+        PDEBUG("ERROR: Failed to register low temperature dev node\n");
         return -ENOMEM;
     }
 
