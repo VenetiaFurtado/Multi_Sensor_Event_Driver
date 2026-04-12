@@ -24,6 +24,7 @@
 #include <linux/fs.h>   // file_operations
 #include <linux/kthread.h>
 #include <linux/delay.h>
+#include <linux/wait.h>
 #include "bme280_sensor.h"
 
 #define BME280_SENSOR_DEVICE "bme280_sensor"
@@ -42,6 +43,8 @@
 #define BME280_REG_CALIB_26 0xE1
 #define BME280_CHIP_ID 0x60 // Expected chip ID
 #define DEVICE_COUNT 3
+
+#define HIGH_TEMP_THRESHOLD 30
 
 MODULE_AUTHOR("Venetia Furtado");
 MODULE_LICENSE("Dual BSD/GPL");
@@ -74,13 +77,17 @@ static struct bme280_hw g_hw;                  // singleton hardware instance
 static struct bme280_node nodes[DEVICE_COUNT]; // array of device nodes
 static struct i2c_client *client_singleton;
 static struct task_struct *sensor_read_kthread; // reads bme280 asynchronously
-//static struct sensor_dev sensor_device;
+static struct task_struct *synthetic_data_event_kthread;
+static wait_queue_head_t wq_high;
+
+// static struct sensor_dev sensor_device;
 static BME280_Data sensor_data; // kthread writes into (shared memory between kthread and user_read)
 
-int sensor_major = 0; // use dynamic major
-int sensor_minor = 0;
 BME280_CalibData calib; // Global calibration data
-int32_t t_fine; // Used for temperature compensation
+int32_t t_fine;         // Used for temperature compensation
+
+static int current_temp = 20; // Synthetic temperature
+static int high_flag = 0;
 
 /**
  * @brief Writes a single byte to a BME280 register.
@@ -447,13 +454,28 @@ struct file_operations bme280_sensor_fops = {
     .release = user_release,
 };
 
-#if 0
-static struct miscdevice bme280_sensor_device = {
-    .minor = MISC_DYNAMIC_MINOR,
-    .name = BME280_SENSOR_DEVICE,
-    .fops = &bme280_sensor_fops,
+/* -------- HIGH TEMP DEVICE -------- */
+
+ssize_t high_temp_read(struct file *f, char __user *buf,
+                       size_t len, loff_t *off)
+{
+    wait_event_interruptible(wq_high, high_flag != 0);
+
+    high_flag = 0;
+
+    return 0;
+}
+
+static const struct file_operations fops_high = {
+    .owner = THIS_MODULE,
+    .read = high_temp_read,
 };
-#endif
+
+static struct miscdevice dev_high = {
+    .minor = MISC_DYNAMIC_MINOR,
+    .name = "high_temperature_event",
+    .fops = &fops_high,
+};
 
 /**
  * @brief kthread entry function
@@ -462,9 +484,9 @@ static int sensor_read(void *data)
 {
     struct bme280_hw *hw = &g_hw;
     BME280_Data local_data;
+    PDEBUG("sensor_read: running\n");
     while (!kthread_should_stop())
     {
-        PDEBUG("sensor_read: running\n");
         bme280_read_all(&local_data); // reads from hw
         mutex_lock(&hw->lock);
         memcpy(&sensor_data, &local_data, sizeof(BME280_Data)); // copies to sensory_data(shared memory between kthread and user_read)
@@ -473,6 +495,26 @@ static int sensor_read(void *data)
     }
     PDEBUG("sensor_read: stopping\n");
 
+    return 0;
+}
+
+/* Thread simulating temperature */
+static int synthetic_data_event_thread(void *data)
+{
+    while (!kthread_should_stop())
+    {
+        ssleep(1);
+
+        current_temp += 1;
+
+        if (current_temp >= HIGH_TEMP_THRESHOLD)
+        {
+            high_flag = 1;
+            wake_up_interruptible(&wq_high);
+            PDEBUG("DEBUG: HIGH TEMP EVENT: %d\n", current_temp);
+            current_temp = 0;
+        }
+    }
     return 0;
 }
 
@@ -512,10 +554,27 @@ static int bme280_sensor_probe(struct i2c_client *client,
 
     mutex_init(&g_hw.lock);
 
+    /*Events*/
+
+    init_waitqueue_head(&wq_high);
+    status = misc_register(&dev_high);
+    if (status)
+    {
+        PDEBUG("ERROR: Failed to register high temperature dev node\n");
+        return -ENOMEM;
+    }
+
     sensor_read_kthread = kthread_run(sensor_read, NULL, "sensor_read_kthread");
     if (IS_ERR(sensor_read_kthread))
     {
         PDEBUG("ERROR: Failed to create kthread\n");
+        return -ENOMEM;
+    }
+
+    synthetic_data_event_kthread = kthread_run(synthetic_data_event_thread, NULL, "synthetic_data_event_kthread");
+    if (IS_ERR(synthetic_data_event_kthread))
+    {
+        PDEBUG("ERROR: Failed to create synthetic_data_event_kthread\n");
         return -ENOMEM;
     }
 
@@ -540,16 +599,6 @@ static int bme280_sensor_probe(struct i2c_client *client,
             goto fail;
         }
     }
-
-#if 0
-    status = misc_register(&bme280_sensor_device);
-    if (status != 0)
-    {
-        dev_err(&client->dev,
-                "misc_register failed: %d\n", status);
-        return status;
-    }
-#endif
 
     PDEBUG("DEBUG: bme280 sensor registered");
     dev_info(&client->dev, "bme280 sensor driver loaded\n");
