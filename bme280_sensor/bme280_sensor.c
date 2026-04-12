@@ -506,7 +506,7 @@ static int synthetic_data_event_thread(void *data)
     {
         ssleep(1);
 
-        current_temp = get_random_u32_max(HIGH_TEMP_THRESHOLD + 5);
+        current_temp = get_random_u32() % (HIGH_TEMP_THRESHOLD + 5);
 
         if (current_temp >= HIGH_TEMP_THRESHOLD)
         {
