@@ -4,7 +4,7 @@
 #include <linux/types.h>
 #include <linux/cdev.h>
 #include <linux/types.h>
-#include "bme280_sensor.h"
+#include "bme280_driver.h"
 #include "i2c.h"
 
 MODULE_AUTHOR("Venetia Furtado");

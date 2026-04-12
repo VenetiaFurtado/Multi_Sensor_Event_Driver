@@ -1,5 +1,5 @@
 /**
- * @file bme280_sensor.c
+ * @file bme280_driver.c
  * @brief Driver code for the BME280 sensor
  *
  * @author Venetia Furtado
@@ -26,7 +26,7 @@
 #include <linux/delay.h>
 #include <linux/wait.h>
 #include <linux/random.h>
-#include "bme280_sensor.h"
+#include "bme280_driver.h"
 #include "i2c.h"
 
 #define BME280_SENSOR_DEVICE "bme280_sensor"
