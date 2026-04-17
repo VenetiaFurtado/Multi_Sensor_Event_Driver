@@ -12,7 +12,6 @@
  * 4. https://developerhelp.microchip.com/xwiki/bin/view/software-tools/linux/apps-i2c/
  * 5. https://chat.deepseek.com/share/w18dko9noz63hm2vq9
  */
-
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/printk.h>
@@ -26,6 +25,8 @@
 #include <linux/delay.h>
 #include <linux/wait.h>
 #include <linux/random.h>
+#include <linux/poll.h>
+#include <linux/compiler.h> // READ_ONCE / WRITE_ONCE
 #include "bme280_driver.h"
 #include "i2c.h"
 
@@ -34,8 +35,9 @@
 #define HIGH_TEMP_THRESHOLD 30
 #define LOW_TEMP_THRESHOLD 5
 
-MODULE_AUTHOR("Venetia Furtado");
-MODULE_LICENSE("Dual BSD/GPL");
+/*******************************************************************************
+ *                        Device type setup
+ ******************************************************************************/
 
 enum bme280_type
 {
@@ -61,20 +63,77 @@ struct bme280_node
     enum bme280_type type;
 };
 
+/*******************************************************************************
+ *                              Global declarations
+ ******************************************************************************/
 static struct bme280_hw g_hw;                  // singleton hardware instance
 static struct bme280_node nodes[DEVICE_COUNT]; // array of device nodes
-static struct task_struct *sensor_read_kthread; // reads bme280 asynchronously
-static struct task_struct *synthetic_data_event_kthread;
-static wait_queue_head_t wq_high, wq_low;
-
-// static struct sensor_dev sensor_device;
-static BME280_Data sensor_data; // kthread writes into (shared memory between kthread and user_read)
-static int current_temp = 20;   // Synthetic temperature
-static int high_flag = 0, low_flag = 0;
-
 
 static struct i2c_client *client_singleton;
+static struct task_struct *sensor_read_kthread; // reads bme280 asynchronously
+static struct task_struct *synthetic_data_event_kthread;
 
+static wait_queue_head_t wq_high;
+static wait_queue_head_t wq_low;
+
+static BME280_Data sensor_data; // kthread writes into (shared memory between kthread and user_read)
+static int current_temp = 20;   // Synthetic temperature
+static int high_flag = 0;
+static int low_flag = 0;
+
+/*******************************************************************************
+ *                            Function forward declarations
+ ******************************************************************************/
+
+int user_open(struct inode *inode, struct file *filp);
+int user_release(struct inode *inode, struct file *filp);
+ssize_t user_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos);
+static __poll_t high_temp_poll(struct file *file, poll_table *wait);
+ssize_t high_temp_read(struct file *f, char __user *buf, size_t len, loff_t *off);
+static __poll_t low_temp_poll(struct file *file, poll_table *wait);
+ssize_t low_temp_read(struct file *f, char __user *buf, size_t len, loff_t *off);
+static int sensor_read(void *data);
+static int synthetic_data_event_thread(void *data);
+static int bme280_sensor_probe(struct i2c_client *client, const struct i2c_device_id *id);
+static void bme280_sensor_remove(struct i2c_client *client);
+
+/*******************************************************************************
+ *                        File operations / device nodes
+ ******************************************************************************/
+struct file_operations bme280_sensor_fops = {
+    .owner = THIS_MODULE,
+    .read = user_read,
+    .open = user_open,
+    .release = user_release,
+};
+
+static const struct file_operations fops_high = {
+    .owner = THIS_MODULE,
+    .read = high_temp_read,
+    .poll = high_temp_poll,
+};
+
+static struct miscdevice dev_high = {
+    .minor = MISC_DYNAMIC_MINOR,
+    .name = "high_temperature_event",
+    .fops = &fops_high,
+};
+
+static const struct file_operations fops_low = {
+    .owner = THIS_MODULE,
+    .read = low_temp_read,
+    .poll = low_temp_poll,
+};
+
+static struct miscdevice dev_low = {
+    .minor = MISC_DYNAMIC_MINOR,
+    .name = "low_temperature_event",
+    .fops = &fops_low,
+};
+
+/*******************************************************************************
+ *                         Main sensor device operations
+ ******************************************************************************/
 /**
  * @brief This function is called when a user-space application performs the open()
  * system call on the sensor device file
@@ -88,14 +147,6 @@ int user_open(struct inode *inode, struct file *filp)
     struct bme280_node *node = container_of(mdev, struct bme280_node, miscdev);
     filp->private_data = node;
     return 0;
-
-#if 0
-    struct sensor_dev *dev;
-    PDEBUG("open");
-    dev = container_of(inode->i_cdev, struct sensor_dev, cdev);
-    filp->private_data = dev;
-    return 0;
-#endif
 }
 
 /**
@@ -119,8 +170,7 @@ int user_release(struct inode *inode, struct file *filp)
  * @param count Number of bytes requested to read.
  * @param f_pos Pointer to the current file position.
  */
-ssize_t user_read(struct file *filp, char __user *buf, size_t count,
-                  loff_t *f_pos)
+ssize_t user_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos)
 {
     ssize_t retval = 0;
     ssize_t num_copy_bytes = 0;
@@ -176,60 +226,123 @@ ssize_t user_read(struct file *filp, char __user *buf, size_t count,
     return retval;
 }
 
-struct file_operations bme280_sensor_fops = {
-    .owner = THIS_MODULE,
-    .read = user_read,
-    .open = user_open,
-    .release = user_release,
-};
+/*******************************************************************************
+ *                         High temperature event device
+ *******************************************************************************/
+/**
+ * @brief .poll callback
+ */
+static __poll_t high_temp_poll(struct file *file, poll_table *wait)
+{
+    __poll_t mask = 0;
 
-/*****************HIGH TEMP DEVICE******************/
+    poll_wait(file, &wq_high, wait);
+
+    if (READ_ONCE(high_flag))
+        mask |= POLLIN | POLLRDNORM;
+
+    return mask;
+}
 
 /**
  * @brief syscall handler for read() for /dev/high_temperature_event
  */
 ssize_t high_temp_read(struct file *f, char __user *buf, size_t len, loff_t *off)
 {
+    size_t temp;
+    int ret;
+
+    if (len < sizeof(temp))
+        return -EINVAL;
+
+    // Non-blocking read support
+    if ((f->f_flags & O_NONBLOCK) && !READ_ONCE(high_flag))
+        return -EAGAIN;
+
+    // Blocking read: sleep until an event is available
+    ret = wait_event_interruptible(wq_high, READ_ONCE(high_flag) != 0);
+    if (ret)
+        return ret; //-ERESTARTSYS if interrupted by signal
+
+    // Capture the event data before clearing the flag
+    temp = READ_ONCE(current_temp);
+
+    if (copy_to_user(buf, &temp, sizeof(temp)))
+        return -EFAULT;
+
+    // Consume the event so poll() won't keep firing
+    WRITE_ONCE(high_flag, 0);
+
+    return sizeof(temp);
+
+#if 0
     wait_event_interruptible(wq_high, high_flag != 0);
 
     high_flag = 0;
 
     return 0;
+#endif
 }
 
-static const struct file_operations fops_high = {
-    .owner = THIS_MODULE,
-    .read = high_temp_read,
-};
+/*******************************************************************************
+ *                         Low temperature event device
+ *******************************************************************************/
+/**
+ * @brief .poll callback
+ */
+static __poll_t low_temp_poll(struct file *file, poll_table *wait)
+{
+    __poll_t mask = 0;
 
-static struct miscdevice dev_high = {
-    .minor = MISC_DYNAMIC_MINOR,
-    .name = "high_temperature_event",
-    .fops = &fops_high,
-};
+    poll_wait(file, &wq_low, wait);
 
-/*******************LOW TEMP DEVICE******************/
+    if (READ_ONCE(low_flag))
+        mask |= POLLIN | POLLRDNORM;
+
+    return mask;
+}
+
 /**
  * @brief syscall handler for read() for /dev/low_temperature_event
  */
 ssize_t low_temp_read(struct file *f, char __user *buf, size_t len, loff_t *off)
 {
+    int temp;
+    int ret;
+
+    if (len < sizeof(temp))
+        return -EINVAL;
+
+    // Non-blocking support
+    if ((f->f_flags & O_NONBLOCK) && !READ_ONCE(low_flag))
+        return -EAGAIN;
+
+    // Blocking wait
+    ret = wait_event_interruptible(wq_low, READ_ONCE(low_flag) != 0);
+    if (ret)
+        return ret;
+
+    // Capture event data
+    temp = READ_ONCE(current_temp);
+
+    if (copy_to_user(buf, &temp, sizeof(temp)))
+        return -EFAULT;
+
+    // Consume the event
+    WRITE_ONCE(low_flag, 0);
+
+    return sizeof(temp);
+#if 0
     wait_event_interruptible(wq_low, low_flag != 0);
     low_flag = 0;
 
     return 0;
+#endif
 }
 
-static const struct file_operations fops_low = {
-    .owner = THIS_MODULE,
-    .read = low_temp_read,
-};
-
-static struct miscdevice dev_low = {
-    .minor = MISC_DYNAMIC_MINOR,
-    .name = "low_temperature_event",
-    .fops = &fops_low,
-};
+/*******************************************************************************
+ *                                Threads
+ ******************************************************************************/
 
 /**
  * @brief kthread entry function
@@ -265,21 +378,24 @@ static int synthetic_data_event_thread(void *data)
 
         if (current_temp >= HIGH_TEMP_THRESHOLD)
         {
-            high_flag = 1;
+            WRITE_ONCE(high_flag, 1);
             wake_up_interruptible(&wq_high);
-            PDEBUG("DEBUG: HIGH TEMP EVENT: %d\n", current_temp);
+            PDEBUG("DEBUG: HIGH TEMP EVENT: %d\n", READ_ONCE(current_temp));
         }
 
         if (current_temp <= LOW_TEMP_THRESHOLD)
         {
-            low_flag = 1;
+            WRITE_ONCE(low_flag, 1);
             wake_up_interruptible(&wq_low);
-            PDEBUG("DEBUG: LOW TEMP EVENT: %d\n", current_temp);
+            PDEBUG("DEBUG: LOW TEMP EVENT: %d\n", READ_ONCE(current_temp));
         }
     }
     return 0;
 }
 
+/*******************************************************************************
+ *                              Probe / remove
+ ******************************************************************************/
 /**
  * @brief I2C probe function for the BME280 sensor. This function is called when
  * the I2C core detects a device matching the driver's
@@ -293,8 +409,7 @@ static int synthetic_data_event_thread(void *data)
  * @param client Pointer to the I2C client structure representing the detected device.
  * @param id     Pointer to the I2C device ID entry that matched the detected device.
  */
-static int bme280_sensor_probe(struct i2c_client *client,
-                               const struct i2c_device_id *id)
+static int bme280_sensor_probe(struct i2c_client *client, const struct i2c_device_id *id)
 {
     int status;
     uint8_t who;
@@ -400,7 +515,13 @@ static void bme280_sensor_remove(struct i2c_client *client)
     }
     PDEBUG("DEBUG: bme280 sensor removed");
     dev_info(&client->dev, "bme280 sensor unloaded\n");
+
+    // return 0;
 }
+
+/*******************************************************************************
+ *                               I2C boilerplate
+ ******************************************************************************/
 
 static const struct i2c_device_id bme280_sensor_id[] = {
     {BME280_SENSOR_DEVICE, 0},
@@ -417,3 +538,6 @@ static struct i2c_driver bme280_sensor_driver = {
 };
 
 module_i2c_driver(bme280_sensor_driver);
+
+MODULE_AUTHOR("Venetia Furtado");
+MODULE_LICENSE("Dual BSD/GPL");
