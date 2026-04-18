@@ -239,7 +239,11 @@ static __poll_t high_temp_poll(struct file *file, poll_table *wait)
     poll_wait(file, &wq_high, wait);
 
     if (READ_ONCE(high_flag))
+    {
         mask |= POLLIN | POLLRDNORM;
+    }
+
+    PDEBUG("poll called: high_flag=%d\n", high_flag);
 
     return mask;
 }
@@ -266,6 +270,8 @@ ssize_t high_temp_read(struct file *f, char __user *buf, size_t len, loff_t *off
 
     // Capture the event data before clearing the flag
     temp = READ_ONCE(current_temp);
+
+    PDEBUG("high_temp_read called\n");
 
     if (copy_to_user(buf, &temp, sizeof(temp)))
         return -EFAULT;
