@@ -88,8 +88,10 @@ static int low_flag = 0;
 int user_open(struct inode *inode, struct file *filp);
 int user_release(struct inode *inode, struct file *filp);
 ssize_t user_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos);
+static int high_temp_open(struct inode *inode, struct file *filp);
 static __poll_t high_temp_poll(struct file *file, poll_table *wait);
 ssize_t high_temp_read(struct file *f, char __user *buf, size_t len, loff_t *off);
+static int low_temp_open(struct inode *inode, struct file *filp);
 static __poll_t low_temp_poll(struct file *file, poll_table *wait);
 ssize_t low_temp_read(struct file *f, char __user *buf, size_t len, loff_t *off);
 static int sensor_read(void *data);
@@ -109,6 +111,7 @@ struct file_operations bme280_sensor_fops = {
 
 static const struct file_operations fops_high = {
     .owner = THIS_MODULE,
+    .open = high_temp_open,
     .read = high_temp_read,
     .poll = high_temp_poll,
 };
@@ -121,6 +124,7 @@ static struct miscdevice dev_high = {
 
 static const struct file_operations fops_low = {
     .owner = THIS_MODULE,
+    .open = low_temp_open,
     .read = low_temp_read,
     .poll = low_temp_poll,
 };
@@ -229,6 +233,14 @@ ssize_t user_read(struct file *filp, char __user *buf, size_t count, loff_t *f_p
 /*******************************************************************************
  *                         High temperature event device
  *******************************************************************************/
+static int high_temp_open(struct inode *inode, struct file *filp)
+{
+    /* Clear any stale event */
+    WRITE_ONCE(high_flag, 0);
+
+    return 0;
+}
+
 /**
  * @brief .poll callback
  */
@@ -293,6 +305,14 @@ ssize_t high_temp_read(struct file *f, char __user *buf, size_t len, loff_t *off
 /*******************************************************************************
  *                         Low temperature event device
  *******************************************************************************/
+static int low_temp_open(struct inode *inode, struct file *filp)
+{
+    /* Clear any stale event */
+    WRITE_ONCE(low_flag, 0);
+
+    return 0;
+}
+
 /**
  * @brief .poll callback
  */
