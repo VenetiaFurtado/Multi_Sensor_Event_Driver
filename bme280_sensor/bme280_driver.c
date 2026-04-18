@@ -356,7 +356,7 @@ static int sensor_read(void *data)
     {
         bme280_read_all(&local_data); // reads from hw
         mutex_lock(&hw->lock);
-        memcpy(&sensor_data, &local_data, sizeof(BME280_Data)); // copies to sensory_data(shared memory between kthread and user_read)
+        memcpy(&sensor_data, &local_data, sizeof(BME280_Data)); // copies to sensor_data(shared memory between kthread and user_read)
         mutex_unlock(&hw->lock);
         msleep(100);
     }
@@ -374,13 +374,18 @@ static int synthetic_data_event_thread(void *data)
     {
         ssleep(1); // 1 sec
 
-        current_temp = get_random_u32() % (HIGH_TEMP_THRESHOLD + 5);
+        // current_temp = get_random_u32() % (HIGH_TEMP_THRESHOLD + 5);
+        current_temp++;
 
         if (current_temp >= HIGH_TEMP_THRESHOLD)
         {
             WRITE_ONCE(high_flag, 1);
             wake_up_interruptible(&wq_high);
             PDEBUG("DEBUG: HIGH TEMP EVENT: %d\n", READ_ONCE(current_temp));
+            if (current_temp > 35)
+            {
+                current_temp = 0;
+            }
         }
 
         if (current_temp <= LOW_TEMP_THRESHOLD)
