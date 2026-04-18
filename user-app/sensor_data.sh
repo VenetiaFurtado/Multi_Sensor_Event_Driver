@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 while true; do
     temp=$(hexdump -v -e '"%d\n"' -n 4 /dev/bme280_temp)
