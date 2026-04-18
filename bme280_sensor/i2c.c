@@ -290,9 +290,9 @@ void bme280_read_all(BME280_Data *data)
 
     // Compensate and convert to float
     data->temperature = bme280_compensate_temp(adc_T); // °C
-    PDEBUG("ADC-T=%d;  Read Temperature = %d\n", adc_T, data->temperature);
+    // PDEBUG("ADC-T=%d;  Read Temperature = %d\n", adc_T, data->temperature);
     data->pressure = bme280_compensate_pressure(adc_P); // hPa
-    PDEBUG("ADC-P=%d;  Read Pressure = %d\n", adc_P, data->pressure);
+    // PDEBUG("ADC-P=%d;  Read Pressure = %d\n", adc_P, data->pressure);
     data->humidity = bme280_compensate_humidity(adc_H); // %
-    PDEBUG("ADC-H=%d;  Read Humidity = %d\n", adc_P, data->humidity);
+    // PDEBUG("ADC-H=%d;  Read Humidity = %d\n", adc_P, data->humidity);
 }

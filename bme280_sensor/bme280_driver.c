@@ -249,7 +249,7 @@ static __poll_t high_temp_poll(struct file *file, poll_table *wait)
  */
 ssize_t high_temp_read(struct file *f, char __user *buf, size_t len, loff_t *off)
 {
-    size_t temp;
+    int temp;
     int ret;
 
     if (len < sizeof(temp))
