@@ -11,6 +11,7 @@
  * 3. https://github.com/cu-ecen-aeld/assignments-3-and-later-VenetiaFurtado
  * 4. https://developerhelp.microchip.com/xwiki/bin/view/software-tools/linux/apps-i2c/
  * 5. https://chat.deepseek.com/share/w18dko9noz63hm2vq9
+ * 6. https://docs.kernel.org/filesystems/sysfs.html
  */
 #include <linux/module.h>
 #include <linux/init.h>
@@ -27,13 +28,17 @@
 #include <linux/random.h>
 #include <linux/poll.h>
 #include <linux/compiler.h> // READ_ONCE / WRITE_ONCE
+#include <stdbool.h>
+#include <linux/device.h>
+#include <linux/sysfs.h>
 #include "bme280_driver.h"
 #include "i2c.h"
 
 #define BME280_SENSOR_DEVICE "bme280_sensor"
 #define DEVICE_COUNT 3
-#define HIGH_TEMP_THRESHOLD 30
-#define LOW_TEMP_THRESHOLD 5
+// #define HIGH_TEMP_THRESHOLD 30
+// #define LOW_TEMP_THRESHOLD 5
+#define TEMP_UPPER_LIMIT 35
 
 /*******************************************************************************
  *                        Device type setup
@@ -81,6 +86,12 @@ static int current_temp = 20;   // Synthetic temperature
 static int high_flag = 0;
 static int low_flag = 0;
 
+// static bool temp_events_enabled = true; // for sysfs
+
+static int high_temp_threshold = 30;
+static int low_temp_threshold = 5;
+static int event_generation_enabled = 1;
+
 /*******************************************************************************
  *                            Function forward declarations
  ******************************************************************************/
@@ -98,6 +109,33 @@ static int sensor_read(void *data);
 static int synthetic_data_event_thread(void *data);
 static int bme280_sensor_probe(struct i2c_client *client, const struct i2c_device_id *id);
 static void bme280_sensor_remove(struct i2c_client *client);
+
+static ssize_t high_temp_threshold_show(struct device *dev,
+                                        struct device_attribute *attr,
+                                        char *buf);
+
+static ssize_t high_temp_threshold_store(struct device *dev,
+                                         struct device_attribute *attr,
+                                         const char *buf,
+                                         size_t count);
+
+static ssize_t low_temp_threshold_show(struct device *dev,
+                                       struct device_attribute *attr,
+                                       char *buf);
+
+static ssize_t low_temp_threshold_store(struct device *dev,
+                                        struct device_attribute *attr,
+                                        const char *buf,
+                                        size_t count);
+
+static ssize_t event_generation_enabled_show(struct device *dev,
+                                             struct device_attribute *attr,
+                                             char *buf);
+
+static ssize_t event_generation_enabled_store(struct device *dev,
+                                              struct device_attribute *attr,
+                                              const char *buf,
+                                              size_t count);
 
 /*******************************************************************************
  *                        File operations / device nodes
@@ -292,15 +330,30 @@ ssize_t high_temp_read(struct file *f, char __user *buf, size_t len, loff_t *off
     WRITE_ONCE(high_flag, 0);
 
     return sizeof(temp);
-
-#if 0
-    wait_event_interruptible(wq_high, high_flag != 0);
-
-    high_flag = 0;
-
-    return 0;
-#endif
 }
+
+static ssize_t high_temp_threshold_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+    return sprintf(buf, "%d\n", high_temp_threshold);
+}
+
+static ssize_t high_temp_threshold_store(struct device *dev, struct device_attribute *attr,
+                                         const char *buf, size_t count)
+{
+    int val;
+    int ret;
+
+    ret = kstrtoint(buf, 10, &val);
+    if (ret)
+    {
+        return ret;
+    }
+    high_temp_threshold = val;
+
+    return count;
+}
+
+static DEVICE_ATTR_RW(high_temp_threshold);
 
 /*******************************************************************************
  *                         Low temperature event device
@@ -323,7 +376,9 @@ static __poll_t low_temp_poll(struct file *file, poll_table *wait)
     poll_wait(file, &wq_low, wait);
 
     if (READ_ONCE(low_flag))
+    {
         mask |= POLLIN | POLLRDNORM;
+    }
 
     return mask;
 }
@@ -358,13 +413,70 @@ ssize_t low_temp_read(struct file *f, char __user *buf, size_t len, loff_t *off)
     WRITE_ONCE(low_flag, 0);
 
     return sizeof(temp);
-#if 0
-    wait_event_interruptible(wq_low, low_flag != 0);
-    low_flag = 0;
-
-    return 0;
-#endif
 }
+
+static ssize_t low_temp_threshold_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+    return sprintf(buf, "%d\n", low_temp_threshold);
+}
+
+static ssize_t low_temp_threshold_store(struct device *dev, struct device_attribute *attr,
+                                        const char *buf, size_t count)
+{
+    int val;
+    int ret;
+
+    ret = kstrtoint(buf, 10, &val);
+    if (ret)
+    {
+        return ret;
+    }
+
+    low_temp_threshold = val;
+    return count;
+}
+
+static DEVICE_ATTR_RW(low_temp_threshold);
+
+static ssize_t event_generation_enabled_show(struct device *dev,
+                                             struct device_attribute *attr, char *buf)
+{
+    return sprintf(buf, "%d\n", event_generation_enabled);
+}
+
+static ssize_t event_generation_enabled_store(struct device *dev, struct device_attribute *attr,
+                                              const char *buf, size_t count)
+{
+    bool val;
+    int ret;
+
+    ret = kstrtobool(buf, &val);
+    if (ret)
+    {
+        return ret;
+    }
+
+    if (val != 0 && val != 1)
+    {
+        return -EINVAL;
+    }
+
+    event_generation_enabled = val;
+    return count;
+}
+
+static DEVICE_ATTR_RW(event_generation_enabled);
+
+static struct attribute *bme280_attrs[] = {
+    &dev_attr_high_temp_threshold.attr,
+    &dev_attr_low_temp_threshold.attr,
+    &dev_attr_event_generation_enabled.attr,
+    NULL,
+};
+
+static const struct attribute_group bme280_attr_group = {
+    .attrs = bme280_attrs,
+};
 
 /*******************************************************************************
  *                                Threads
@@ -400,9 +512,32 @@ static int synthetic_data_event_thread(void *data)
     {
         ssleep(1); // 1 sec
 
-        // current_temp = get_random_u32() % (HIGH_TEMP_THRESHOLD + 5);
         current_temp++;
-        if (current_temp > 35)
+
+        if (current_temp > TEMP_UPPER_LIMIT)
+        {
+            current_temp = 0;
+        }
+
+        if (event_generation_enabled == 1)
+        {
+            if (current_temp >= high_temp_threshold)
+            {
+                high_flag = 1;
+                wake_up_interruptible(&wq_high);
+                PDEBUG("DEBUG: HIGH TEMP EVENT: %d\n", current_temp);
+            }
+
+            if (current_temp <= low_temp_threshold)
+            {
+                low_flag = 1;
+                wake_up_interruptible(&wq_low);
+                PDEBUG("DEBUG: LOW TEMP EVENT: %d\n", current_temp);
+            }
+        }
+
+#if 0
+        if (current_temp > TEMP_UPPER_LIMIT)
         {
             current_temp = 0;
         }
@@ -420,6 +555,7 @@ static int synthetic_data_event_thread(void *data)
             wake_up_interruptible(&wq_low);
             PDEBUG("DEBUG: LOW TEMP EVENT: %d\n", READ_ONCE(current_temp));
         }
+#endif
     }
     return 0;
 }
@@ -515,6 +651,13 @@ static int bme280_sensor_probe(struct i2c_client *client, const struct i2c_devic
         }
     }
 
+    status = sysfs_create_group(&client->dev.kobj, &bme280_attr_group);
+    if (status)
+    {
+        PDEBUG("ERROR: Failed to create sysfs files\n");
+        goto fail;
+    }
+
     PDEBUG("DEBUG: bme280 sensor registered");
     dev_info(&client->dev, "bme280 sensor driver loaded\n");
 
@@ -536,18 +679,30 @@ fail:
 static void bme280_sensor_remove(struct i2c_client *client)
 {
     int i;
+
+    sysfs_remove_group(&client->dev.kobj, &bme280_attr_group);
+    PDEBUG("DEBUG: sysfs group removed");
+
     for (i = 0; i < DEVICE_COUNT; i++)
     {
         misc_deregister(&nodes[i].miscdev);
     }
+
+    misc_deregister(&dev_high);
+    misc_deregister(&dev_low);
+
     if (sensor_read_kthread)
     {
         kthread_stop(sensor_read_kthread);
     }
+
+    if (synthetic_data_event_kthread)
+    {
+        kthread_stop(synthetic_data_event_kthread);
+    }
+
     PDEBUG("DEBUG: bme280 sensor removed");
     dev_info(&client->dev, "bme280 sensor unloaded\n");
-
-    // return 0;
 }
 
 /*******************************************************************************
