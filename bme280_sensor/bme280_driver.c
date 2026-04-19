@@ -85,11 +85,17 @@ static int current_temp = 20;   // Synthetic temperature
 static int high_flag = 0;
 static int low_flag = 0;
 
-// static bool temp_events_enabled = true; // for sysfs
-
 static int high_temp_threshold = 30;
 static int low_temp_threshold = 5;
 static int event_generation_enabled = 1;
+
+static int high_event_count = 0;
+static int low_event_count = 0;
+
+static long long temp_sum = 0;
+static int temp_samples = 0;
+
+static DEFINE_MUTEX(stats_lock);
 
 /*******************************************************************************
  *                            Function forward declarations
@@ -109,6 +115,7 @@ static int synthetic_data_event_thread(void *data);
 static int bme280_sensor_probe(struct i2c_client *client, const struct i2c_device_id *id);
 static void bme280_sensor_remove(struct i2c_client *client);
 
+#if 0
 static ssize_t high_temp_threshold_show(struct device *dev, struct device_attribute *attr,
                                         char *buf);
 
@@ -129,6 +136,7 @@ static ssize_t event_generation_enabled_show(struct device *dev, struct device_a
 static ssize_t event_generation_enabled_store(struct device *dev, struct device_attribute *attr,
                                               const char *buf,
                                               size_t count);
+#endif
 
 /*******************************************************************************
  *                        File operations / device nodes
@@ -460,10 +468,62 @@ static ssize_t event_generation_enabled_store(struct device *dev, struct device_
 
 static DEVICE_ATTR_RW(event_generation_enabled);
 
+static ssize_t high_event_count_show(struct device *dev, struct device_attribute *attr,
+                                     char *buf)
+{
+    int value;
+
+    mutex_lock(&stats_lock);
+    value = high_event_count;
+    mutex_unlock(&stats_lock);
+
+    return sprintf(buf, "%d\n", value);
+}
+
+static DEVICE_ATTR_RO(high_event_count);
+
+static ssize_t low_event_count_show(struct device *dev, struct device_attribute *attr,
+                                    char *buf)
+{
+    int value;
+
+    mutex_lock(&stats_lock);
+    value = low_event_count;
+    mutex_unlock(&stats_lock);
+
+    return sprintf(buf, "%d\n", value);
+}
+
+static DEVICE_ATTR_RO(low_event_count);
+
+static ssize_t avg_temp_show(struct device *dev, struct device_attribute *attr,
+                             char *buf)
+{
+    long long sum;
+    int samples;
+    int avg = 0;
+
+    mutex_lock(&stats_lock);
+    sum = temp_sum;
+    samples = temp_samples;
+    if (samples > 0)
+    {
+        avg = sum / samples;
+    }
+    mutex_unlock(&stats_lock);
+
+    return sprintf(buf, "%d\n", avg);
+}
+
+static DEVICE_ATTR_RO(avg_temp);
+
 static struct attribute *bme280_attrs[] = {
     &dev_attr_high_temp_threshold.attr,
     &dev_attr_low_temp_threshold.attr,
     &dev_attr_event_generation_enabled.attr,
+    &dev_attr_high_event_count.attr,
+    &dev_attr_low_event_count.attr,
+    &dev_attr_avg_temp.attr,
     NULL,
 };
 
@@ -489,6 +549,11 @@ static int sensor_read(void *data)
         mutex_lock(&hw->lock);
         memcpy(&sensor_data, &local_data, sizeof(BME280_Data)); // copies to sensor_data(shared memory between kthread and user_read)
         mutex_unlock(&hw->lock);
+
+        mutex_lock(&stats_lock);
+        temp_sum += local_data.temperature;
+        temp_samples++;
+        mutex_unlock(&stats_lock);
         msleep(100);
     }
     PDEBUG("sensor_read: stopping\n");
@@ -517,6 +582,11 @@ static int synthetic_data_event_thread(void *data)
             if (current_temp >= high_temp_threshold)
             {
                 high_flag = 1;
+
+                mutex_lock(&stats_lock);
+                high_event_count++;
+                mutex_unlock(&stats_lock);
+
                 wake_up_interruptible(&wq_high);
                 PDEBUG("DEBUG: HIGH TEMP EVENT: %d\n", current_temp);
             }
@@ -524,31 +594,15 @@ static int synthetic_data_event_thread(void *data)
             if (current_temp <= low_temp_threshold)
             {
                 low_flag = 1;
+
+                mutex_lock(&stats_lock);
+                low_event_count++;
+                mutex_unlock(&stats_lock);
+
                 wake_up_interruptible(&wq_low);
                 PDEBUG("DEBUG: LOW TEMP EVENT: %d\n", current_temp);
             }
         }
-
-#if 0
-        if (current_temp > TEMP_UPPER_LIMIT)
-        {
-            current_temp = 0;
-        }
-
-        if (current_temp >= HIGH_TEMP_THRESHOLD)
-        {
-            WRITE_ONCE(high_flag, 1);
-            wake_up_interruptible(&wq_high);
-            PDEBUG("DEBUG: HIGH TEMP EVENT: %d\n", READ_ONCE(current_temp));
-        }
-
-        if (current_temp <= LOW_TEMP_THRESHOLD)
-        {
-            WRITE_ONCE(low_flag, 1);
-            wake_up_interruptible(&wq_low);
-            PDEBUG("DEBUG: LOW TEMP EVENT: %d\n", READ_ONCE(current_temp));
-        }
-#endif
     }
     return 0;
 }
