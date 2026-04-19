@@ -28,7 +28,6 @@
 #include <linux/random.h>
 #include <linux/poll.h>
 #include <linux/compiler.h> // READ_ONCE / WRITE_ONCE
-#include <stdbool.h>
 #include <linux/device.h>
 #include <linux/sysfs.h>
 #include "bme280_driver.h"
