@@ -46,7 +46,7 @@ int main(void)
 
    while (1)
    {
-      int ret = poll(fds, NUM_FDS, -1);
+      int ret = poll(fds, NUM_FDS, 2000);
 
       if (ret < 0)
       {

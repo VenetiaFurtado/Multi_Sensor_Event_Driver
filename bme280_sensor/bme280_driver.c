@@ -109,30 +109,24 @@ static int synthetic_data_event_thread(void *data);
 static int bme280_sensor_probe(struct i2c_client *client, const struct i2c_device_id *id);
 static void bme280_sensor_remove(struct i2c_client *client);
 
-static ssize_t high_temp_threshold_show(struct device *dev,
-                                        struct device_attribute *attr,
+static ssize_t high_temp_threshold_show(struct device *dev, struct device_attribute *attr,
                                         char *buf);
 
-static ssize_t high_temp_threshold_store(struct device *dev,
-                                         struct device_attribute *attr,
+static ssize_t high_temp_threshold_store(struct device *dev, struct device_attribute *attr,
                                          const char *buf,
                                          size_t count);
 
-static ssize_t low_temp_threshold_show(struct device *dev,
-                                       struct device_attribute *attr,
+static ssize_t low_temp_threshold_show(struct device *dev, struct device_attribute *attr,
                                        char *buf);
 
-static ssize_t low_temp_threshold_store(struct device *dev,
-                                        struct device_attribute *attr,
+static ssize_t low_temp_threshold_store(struct device *dev, struct device_attribute *attr,
                                         const char *buf,
                                         size_t count);
 
-static ssize_t event_generation_enabled_show(struct device *dev,
-                                             struct device_attribute *attr,
+static ssize_t event_generation_enabled_show(struct device *dev, struct device_attribute *attr,
                                              char *buf);
 
-static ssize_t event_generation_enabled_store(struct device *dev,
-                                              struct device_attribute *attr,
+static ssize_t event_generation_enabled_store(struct device *dev, struct device_attribute *attr,
                                               const char *buf,
                                               size_t count);
 
