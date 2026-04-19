@@ -54,6 +54,12 @@ int main(void)
          break;
       }
 
+      if (ret == 0)
+      {
+         printf("Event generation disabled\n");
+         continue;
+      }
+
       // High temperature event
       if (fds[0].revents & POLLIN)
       {
