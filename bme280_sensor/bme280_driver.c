@@ -505,7 +505,7 @@ static ssize_t avg_temp_show(struct device *dev, struct device_attribute *attr,
 
     mutex_lock(&stats_lock);
     sum = temp_sum;
-    samples = temp_samples;
+    samples = temp_samples * 100;
     if (samples > 0)
     {
         avg = sum / samples;
