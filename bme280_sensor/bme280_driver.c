@@ -224,7 +224,10 @@ ssize_t user_read(struct file *filp, char __user *buf, size_t count, loff_t *f_p
         return -EINVAL;
     }
 
-    copy_status = copy_to_user(buf, &val, 4);
+    // copy data
+    num_copy_bytes = 4;
+
+    copy_status = copy_to_user(buf, &val, num_copy_bytes);
     if (copy_status == 0)
     {
         // advance file position by number of bytes copied
@@ -733,7 +736,7 @@ static void bme280_sensor_remove(struct i2c_client *client)
 static const struct i2c_device_id bme280_sensor_id[] = {
     {BME280_SENSOR_DEVICE, 0},
     {}};
-MODULE_DEVICE_TABLE(i2c, bme280_sensor_id); //list of device names the driver handles
+MODULE_DEVICE_TABLE(i2c, bme280_sensor_id); // list of device names the driver handles
 
 static struct i2c_driver bme280_sensor_driver = {
     .driver = {
