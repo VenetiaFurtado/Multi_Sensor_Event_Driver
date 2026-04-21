@@ -35,8 +35,6 @@
 
 #define BME280_SENSOR_DEVICE "bme280_sensor"
 #define DEVICE_COUNT 3
-// #define HIGH_TEMP_THRESHOLD 30
-// #define LOW_TEMP_THRESHOLD 5
 #define TEMP_UPPER_LIMIT 35
 
 /*******************************************************************************
@@ -73,7 +71,7 @@ struct bme280_node
 static struct bme280_hw g_hw;                  // singleton hardware instance
 static struct bme280_node nodes[DEVICE_COUNT]; // array of device nodes
 
-static struct i2c_client *client_singleton;
+static struct i2c_client *client_bme280;
 static struct task_struct *sensor_read_kthread; // reads bme280 asynchronously
 static struct task_struct *synthetic_data_event_kthread;
 
@@ -114,29 +112,6 @@ static int sensor_read(void *data);
 static int synthetic_data_event_thread(void *data);
 static int bme280_sensor_probe(struct i2c_client *client, const struct i2c_device_id *id);
 static void bme280_sensor_remove(struct i2c_client *client);
-
-#if 0
-static ssize_t high_temp_threshold_show(struct device *dev, struct device_attribute *attr,
-                                        char *buf);
-
-static ssize_t high_temp_threshold_store(struct device *dev, struct device_attribute *attr,
-                                         const char *buf,
-                                         size_t count);
-
-static ssize_t low_temp_threshold_show(struct device *dev, struct device_attribute *attr,
-                                       char *buf);
-
-static ssize_t low_temp_threshold_store(struct device *dev, struct device_attribute *attr,
-                                        const char *buf,
-                                        size_t count);
-
-static ssize_t event_generation_enabled_show(struct device *dev, struct device_attribute *attr,
-                                             char *buf);
-
-static ssize_t event_generation_enabled_store(struct device *dev, struct device_attribute *attr,
-                                              const char *buf,
-                                              size_t count);
-#endif
 
 /*******************************************************************************
  *                        File operations / device nodes
@@ -218,7 +193,7 @@ ssize_t user_read(struct file *filp, char __user *buf, size_t count, loff_t *f_p
     ssize_t retval = 0;
     ssize_t num_copy_bytes = 0;
     unsigned long copy_status = 0;
-    int32_t val = 0x24;
+    int32_t val = 0;
     BME280_Data local_user_data;
     struct bme280_node *node = filp->private_data;
     struct bme280_hw *hw = node->hw;
@@ -249,10 +224,7 @@ ssize_t user_read(struct file *filp, char __user *buf, size_t count, loff_t *f_p
         return -EINVAL;
     }
 
-    // copy data
-    num_copy_bytes = 4;
-
-    copy_status = copy_to_user(buf, &val, num_copy_bytes);
+    copy_status = copy_to_user(buf, &val, 4);
     if (copy_status == 0)
     {
         // advance file position by number of bytes copied
@@ -287,11 +259,11 @@ static __poll_t high_temp_poll(struct file *file, poll_table *wait)
 {
     __poll_t mask = 0;
 
-    poll_wait(file, &wq_high, wait);
+    poll_wait(file, &wq_high, wait); // registers th process with the wait queue
 
     if (READ_ONCE(high_flag))
     {
-        mask |= POLLIN | POLLRDNORM;
+        mask |= POLLIN | POLLRDNORM; // data available
     }
 
     PDEBUG("poll called: high_flag=%d\n", high_flag);
@@ -310,14 +282,12 @@ ssize_t high_temp_read(struct file *f, char __user *buf, size_t len, loff_t *off
     if (len < sizeof(temp))
         return -EINVAL;
 
-    // Non-blocking read support
-    if ((f->f_flags & O_NONBLOCK) && !READ_ONCE(high_flag))
-        return -EAGAIN;
-
-    // Blocking read: sleep until an event is available
+    // sleep until an event is available
     ret = wait_event_interruptible(wq_high, READ_ONCE(high_flag) != 0);
     if (ret)
+    {
         return ret; //-ERESTARTSYS if interrupted by signal
+    }
 
     // Capture the event data before clearing the flag
     temp = READ_ONCE(current_temp);
@@ -325,7 +295,9 @@ ssize_t high_temp_read(struct file *f, char __user *buf, size_t len, loff_t *off
     PDEBUG("high_temp_read called\n");
 
     if (copy_to_user(buf, &temp, sizeof(temp)))
+    {
         return -EFAULT;
+    }
 
     // Consume the event so poll() won't keep firing
     WRITE_ONCE(high_flag, 0);
@@ -354,7 +326,13 @@ static ssize_t high_temp_threshold_store(struct device *dev, struct device_attri
     return count;
 }
 
-static DEVICE_ATTR_RW(high_temp_threshold);
+static DEVICE_ATTR_RW(high_temp_threshold); // creates an attribute structure
+// Expands to:
+// struct device_attribute dev_attr_high_temp_threshold = {
+//     .attr = { .name = "high_temp_threshold", .mode = 0644 },
+//     .show = high_temp_threshold_show,
+//     .store = high_temp_threshold_store,
+// };
 
 /*******************************************************************************
  *                         Low temperature event device
@@ -395,11 +373,7 @@ ssize_t low_temp_read(struct file *f, char __user *buf, size_t len, loff_t *off)
     if (len < sizeof(temp))
         return -EINVAL;
 
-    // Non-blocking support
-    if ((f->f_flags & O_NONBLOCK) && !READ_ONCE(low_flag))
-        return -EAGAIN;
-
-    // Blocking wait
+    // wait until data is available
     ret = wait_event_interruptible(wq_low, READ_ONCE(low_flag) != 0);
     if (ret)
         return ret;
@@ -630,7 +604,7 @@ static int bme280_sensor_probe(struct i2c_client *client, const struct i2c_devic
     int i;
     const char *names[DEVICE_COUNT];
 
-    client_singleton = client;
+    client_bme280 = client;
 
     who = i2c_smbus_read_byte_data(client, BME280_REG_CHIP_ID);
     if (who != BME280_CHIP_ID)
@@ -641,21 +615,21 @@ static int bme280_sensor_probe(struct i2c_client *client, const struct i2c_devic
 
     PDEBUG("DEBUG: bme280 sensor found");
 
-    bme280_init(client_singleton);
+    bme280_init(client_bme280); // configures BME280 registers over I2C
 
     mutex_init(&g_hw.lock);
 
     // Events
-    init_waitqueue_head(&wq_high);
-    status = misc_register(&dev_high);
+    init_waitqueue_head(&wq_high);     // waiting for high temp event
+    status = misc_register(&dev_high); // creates /dev/high_temperature_event
     if (status)
     {
         PDEBUG("ERROR: Failed to register high temperature dev node\n");
         return -ENOMEM;
     }
 
-    init_waitqueue_head(&wq_low);
-    status = misc_register(&dev_low);
+    init_waitqueue_head(&wq_low);     // waiting for low temp event
+    status = misc_register(&dev_low); // creates /dev/low_temperature_event
     if (status)
     {
         PDEBUG("ERROR: Failed to register low temperature dev node\n");
@@ -680,7 +654,7 @@ static int bme280_sensor_probe(struct i2c_client *client, const struct i2c_devic
     names[1] = "bme280_humidity";
     names[2] = "bme280_pressure";
 
-    // register device
+    // register each device
     for (i = 0; i < DEVICE_COUNT; i++)
     {
         nodes[i].type = i;
@@ -753,13 +727,13 @@ static void bme280_sensor_remove(struct i2c_client *client)
 }
 
 /*******************************************************************************
- *                               I2C boilerplate
+ *                               I2C driver registration
  ******************************************************************************/
 
 static const struct i2c_device_id bme280_sensor_id[] = {
     {BME280_SENSOR_DEVICE, 0},
     {}};
-MODULE_DEVICE_TABLE(i2c, bme280_sensor_id);
+MODULE_DEVICE_TABLE(i2c, bme280_sensor_id); //list of device names the driver handles
 
 static struct i2c_driver bme280_sensor_driver = {
     .driver = {

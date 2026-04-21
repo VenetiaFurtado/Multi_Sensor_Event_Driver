@@ -39,14 +39,14 @@ int main(void)
          perror(buffer);
          return 1;
       }
-      fds[i].events = POLLIN; // Tell poll() what events we care about
+      fds[i].events = POLLIN; //wake up when data is available
    }
 
    printf("Monitoring device FDs...\n");
 
    while (1)
    {
-      int ret = poll(fds, NUM_FDS, -1);
+      int ret = poll(fds, NUM_FDS, -1); //puts userapp to sleep until something happens 
 
       if (ret < 0)
       {
@@ -90,6 +90,8 @@ int main(void)
             printf("Device %s error/hangup\n", device_nodes[i]);
          }
       }
+
+      //do some other work
    }
 
    // close fds
